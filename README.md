@@ -1,4 +1,4 @@
-"# Genomic-Exploration-of-Climate-Driven-Evolution-and-evolutionary-convergence-in-forest-pathogens" 
+"# Genomic-Exploration-of-Climate-Driven-Evolution-and-evolutionary-convergence-in-forest-pathogens"   
 Scripts used for Hessenauer et al. 2025 in GBE  
 
 Data can be found on Figshare https://doi.org/10.6084/m9.figshare.28583252.v1  
