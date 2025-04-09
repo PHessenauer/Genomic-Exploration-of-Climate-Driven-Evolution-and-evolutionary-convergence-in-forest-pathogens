@@ -1,0 +1,670 @@
+---
+title: "GEA paper"
+output: html_notebook
+---
+
+R v 4.2.2
+
+
+```{r, echo=FALSE, results=FALSE}
+library(adegenet)
+library(vegan)
+library(robust)
+library(qvalue)
+library(ggplot2)
+library(ggpubr)
+library(ggVennDiagram)
+source("/rdadapt.R")
+library(dartR)
+library(vcfR)
+library(data.table)
+library(stringr)
+library(dplyr)
+```
+
+
+# Load and prepare data
+
+Load data DED
+
+```{r DED, echo=FALSE, results=FALSE}
+#Genet
+allele_freqs_DED = read.PLINK("/DED_maf_noHET.raw", parallel = FALSE)
+allele_freqs_DED
+temp_imp <- apply(allele_freqs_DED, 2, function(x) replace(x, is.na(x), as.numeric(names(which.max(table(x))))))
+allele_freqs_DED=temp_imp
+#MEMs
+dbmem_DED = read.csv2("/dbmems_DED.csv")
+#Environment
+env_DED = read.csv2("/clim_data_NA_filtered_ordered_province_ONU_PCs.csv", row.names = 1)
+#Genet PCA scores
+scores_DED=read.csv2("/pca_scores_DED.csv")
+scores_DED=scores_DED[,2:4]
+names(scores_DED)=c("genet_PC1","genet_PC2","genet_PC3")
+#Env PCA scores
+clim_DED=as.data.frame(cbind(env_DED$clim_PC1,env_DED$clim_PC2))
+names(clim_DED)=c("PC1_clim","PC2_clim")
+# DAPC groups
+grp_DED=read.csv2("/dapc_grp_DED.csv")
+names(grp_DED)=c("ID","Cluster")
+#Loadings for clim PCA
+loadings_DED=read.csv2("/clim_pca_loadings_DED.csv")
+#Merge data
+tot_DED=cbind(env_DED,dbmem_DED, scores_DED)
+tot_DED$clim_PC3=as.numeric(as.character(tot_DED$clim_PC3))
+tot_DED=as.data.frame(scale(tot_DED[,5:length(tot_DED)]))
+
+pred_clim_DED=read.csv2("/CNRMESM21_clim_data_DED.csv")
+```
+
+Load data DNB
+
+```{r DNB, echo=FALSE, results=FALSE}
+#Genet
+allele_freqs_DNB = read.PLINK("/DNB_maf_noHET.raw", parallel = FALSE)
+allele_freqs_DNB
+temp_imp <- apply(allele_freqs_DNB, 2, function(x) replace(x, is.na(x), as.numeric(names(which.max(table(x))))))
+allele_freqs_DNB=temp_imp
+#MEMs
+dbmem_DNB=read.csv2("/dbmems_DNB.csv")
+#Environnement
+env_DNB=read.csv2("/clim_data_DNB_NA_filtered_ordered.csv")
+#Genet PCA scores
+scores_DNB=read.csv2("/pca_genet_scores_DNB.csv")
+scores_DNB=scores_DNB[,c(2:9)]
+names(scores_DNB)=c("genet_PC1","genet_PC2","genet_PC3","genet_PC4","genet_PC5","genet_PC6","genet_PC7","genet_PC8")
+#Env PCA scores
+clim_DNB = read.csv2("/climPCA_coords_DNB.csv")
+str(clim_DNB)
+clim_DNB=clim_DNB[,1:2]
+names(clim_DNB)=c("clim_PC1","clim_PC2")
+# DAPC groups
+grp_DNB=read.csv2("/dapc_grp_DNB.csv")
+names(grp_DNB)=c("ID","Cluster")
+#Loadings for clim PCA
+loadings_DNB=read.csv2("/clim_pca_loadings_DNB.csv")
+#Merge data
+tot_DNB=cbind(env_DNB, scores_DNB, dbmem_DNB, clim_DNB)
+tot_DNB=as.data.frame(scale(tot_DNB[,c(2,3,7:64)]))
+
+pred_clim_DNB=read.csv2("/CNRMESM21_clim_data_DNB.csv")
+```
+
+Load data SNC
+
+```{r SNC, echo=FALSE, results=FALSE}
+#Genet
+allele_freqs_SNC = read.PLINK("/SNC_maf_noHET_noNM.raw", parallel = FALSE)
+allele_freqs_SNC
+temp_imp <- apply(allele_freqs_SNC, 2, function(x) replace(x, is.na(x), as.numeric(names(which.max(table(x))))))
+allele_freqs_SNC=temp_imp 
+#MEMs
+dbmem_SNC=read.csv2("/dbmems_SNC.csv")
+#Environnement
+env_SNC=read.csv2("/clim_data_SNC_NA_filtered_ordered.csv")
+#Env PCA scores
+clim_SNC=read.csv2("/climPCA_coords_SNC.csv")
+clim_SNC=clim_SNC[,2:3]
+names(clim_SNC)=c("clim_PC1","clim_PC2")
+#Genet PCA scores
+scores_SNC=read.csv2("/pca_genet_scores_SNC.csv")
+scores_SNC=scores_SNC[,2:4]
+names(scores_SNC)=c("genet_PC1","genet_PC2","genet_PC3")
+# DAPC groups
+grp_SNC=read.csv2("/dapc_grp_SNC.csv")
+names(grp_SNC)=c("ID","Cluster")
+#Loadings for clim PCA
+loadings_SNC=read.csv2("/clim_pca_loadings_SNC.csv")
+#Merge data
+tot_SNC=cbind(env_SNC, scores_SNC, dbmem_SNC, clim_SNC)
+tot_SNC=as.data.frame(scale(tot_SNC[,c(5:45)]))
+
+pred_clim_SNC=read.csv2("/CNRMESM21_clim_data_SNC.csv", head=T)
+
+#remove NM
+pred_clim_SNC=pred_clim_SNC[-c(127), ] 
+tot_SNC=tot_SNC[-c(127), ]
+env_SNC=env_SNC[-c(127), ]
+clim_SNC=clim_SNC[-c(127), ]
+
+```
+
+# Basic plots
+## Genet PCAs
+```{r, echo=FALSE, echo=FALSE, results=FALSE}
+gPCA_DED=ggplot(scores_DED, aes(genet_PC1,genet_PC2, color=as.factor(grp_DED$Cluster))) +
+  geom_point(size=5,alpha=0.6) +
+  theme_bw() +
+  ylab("PC2 (17%)") +
+  xlab("PC1 (37.9%)") +
+  geom_hline(yintercept = 0, lty = 2) +
+  geom_vline(xintercept = 0, lty = 2) +
+  theme(legend.position = "none")+
+  ggtitle("DED")+
+  theme(plot.title = element_text(hjust = 0.5),axis.text.x=element_text(size=15),axis.text.y = element_text(size=15),
+        axis.title = element_text(size=20),
+        legend.text = element_text(size=15),
+        legend.title = element_text(size=20))+
+  scale_color_manual(values=c("#1b9e77","#0d4f3b","#b3dfd2"))
+
+gPCA_DNB=ggplot(scores_DNB, aes(genet_PC1,genet_PC2, color=as.factor(grp_DNB$Cluster))) +
+  geom_point(size=5,alpha=0.6) +
+  theme_bw() +
+  ylab("PC2 (13.4%)") +
+  xlab("PC1 (26.2%)") +
+  geom_hline(yintercept = 0, lty = 2) +
+  geom_vline(xintercept = 0, lty = 2) +
+  theme(legend.position = "none")+
+  ggtitle("DNB")+
+  theme(plot.title = element_text(hjust = 0.5),axis.text.x=element_text(size=15),axis.text.y = element_text(size=15),
+        axis.title = element_text(size=20),
+        legend.text = element_text(size=15),
+        legend.title = element_text(size=20))+
+  scale_color_manual(values=c("#d95f02","#ad4c01","#823901","#411c00","#150900","#e48f4d","#efbf99","#fbefe5"))
+
+gPCA_SNC=ggplot(scores_SNC, aes(genet_PC1,genet_PC2, color=as.factor(grp_SNC$Cluster))) +
+  geom_point(size=5,alpha=0.6) +
+  theme_bw() +
+  ylab("PC2 (14.3%)") +
+  xlab("PC1 (32%)") +
+  geom_hline(yintercept = 0, lty = 2) +
+  geom_vline(xintercept = 0, lty = 2) +
+  theme(legend.position = "none")+
+  ggtitle("SNC")+
+  theme(plot.title = element_text(hjust = 0.5),axis.text.x=element_text(size=15),axis.text.y = element_text(size=15),
+        axis.title = element_text(size=20),
+        legend.text = element_text(size=15),
+        legend.title = element_text(size=20))+
+  scale_color_manual(values=c("#7570b3","#2e2c47","#c7c5e0"))
+
+pdf("C:/Users/Yunalesca/Documents/BioSAFE/CLIM/triple_genet.pdf", height = 5, width = 15)
+ggarrange(gPCA_DED, gPCA_DNB, gPCA_SNC, 
+          labels = c("C", "D", "E"),
+          ncol = 3, nrow = 1)
+dev.off()
+```
+
+
+## Clim PCAs
+
+```{r, echo=FALSE, echo=FALSE, results=FALSE}
+cPCA_DED=ggplot(clim_DED, aes(x = PC1_clim, y = PC2_clim, colour = tot_DED$province)) +
+  geom_segment(data = loadings_DED, aes(x = 0, y = 0, xend = (PC1*20),
+     yend = (PC2*20)), arrow = arrow(length = unit(1/2, "picas")),
+     color = "black") +
+  geom_point(size=5,alpha=0.6) +
+  annotate("text", x = (loadings_DED$PC1*20), y = (loadings_DED$PC2*20),
+     label = loadings_DED$Variables)+
+  theme_bw()+
+  labs(title = "DED", color="Province")
+
+#+
+  # theme(legend.title = element_text( size=3), legend.text=element_text(size=3))+
+  # guides(color = guide_legend(override.aes = list(size = 0.5)))
+
+cPCA_DNB=ggplot(clim_DNB, aes(x = clim_PC1, y = clim_PC2, colour = tot_DNB$province)) +
+  geom_segment(data = loadings_DNB, aes(x = 0, y = 0, xend = (PC1*50),
+     yend = (PC2*50)), arrow = arrow(length = unit(1/2, "picas")),
+     color = "black") +
+  geom_point(size=5,alpha=0.6) +
+  annotate("text", x = (loadings_DNB$PC1*50), y = (loadings_DNB$PC2*50),
+     label = loadings_DNB$Variables)+
+  theme_bw()+
+  labs(title = "DNB", color="Province")#+
+  # theme(legend.title = element_text( size=3), legend.text=element_text(size=3))+
+  # guides(color = guide_legend(override.aes = list(size = 0.5)))
+
+cPCA_SNC=ggplot(clim_SNC, aes(x = clim_PC1, y = clim_PC2, colour = tot_SNC$province)) +
+  geom_segment(data = loadings_SNC, aes(x = 0, y = 0, xend = (PC1*50),
+     yend = (PC2*50)), arrow = arrow(length = unit(1/2, "picas")),
+     color = "black") +
+  geom_point(size=5,alpha=0.6) +
+  annotate("text", x = (loadings_SNC$PC1*50), y = (loadings_SNC$PC2*50),
+     label = loadings_SNC$Variables)+
+  theme_bw()+
+  labs(title = "SNC", color="Province")#+
+  # theme(legend.title = element_text( size=3), legend.text=element_text(size=3))+
+  # guides(color = guide_legend(override.aes = list(size = 0.5)))
+
+pdf("C:/Users/Yunalesca/Documents/BioSAFE/CLIM/triple_clim.pdf", height = 5, width = 15)
+ggarrange(cPCA_DED, cPCA_DNB, cPCA_SNC, 
+          labels = c("A", "B", "C"),
+          ncol = 3, nrow = 1)
+dev.off()
+```
+
+# Run GEA analyses
+## RDA
+
+
+### Variance partitioning
+Variance partitioning can be a useful step to explore the (statistical) association among available descriptors, to better understand the covariation of environmental and genetic gradients, and to determine how much overall genetic variation is shaped by environmental, geographic, and demographic factors before conducting further landscape genomics study (From Capblancq & Forester).
+
+#### DED
+```{r,echo=TRUE}
+genet_RDA_DED=rda(allele_freqs_DED ~ genet_PC1 + genet_PC2 + Condition(clim_PC1+clim_PC2+MEM1+MEM2),data = tot_DED, scale = TRUE)
+clim_RDA_DED=rda(allele_freqs_DED ~ clim_PC1 + clim_PC2 + Condition(genet_PC1+MEM1),data = tot_DED, scale = TRUE)
+spatial_RDA_DED=rda(allele_freqs_DED ~ MEM1+ MEM2 + Condition(clim_PC1+clim_PC2+genet_PC1+genet_PC2),data = tot_DED, scale = TRUE)
+complete_rda_DED=rda(allele_freqs_DED ~ MEM1+ MEM2 + clim_PC1+clim_PC2+genet_PC1+genet_PC2,data = tot_DED, scale = TRUE)
+conv_RDA_DED=rda(allele_freqs_DED ~ clim_PC1+clim_PC2,data = tot_DED, scale = TRUE)
+```
+
+```{r, echo=FALSE}
+var_part_DED=as.data.frame(cbind(c("alleles ~ genetics","alleles ~ genetics","alleles ~ climate","alleles ~ climate","alleles ~ spatial","alleles ~ spatial","Full","Full"),rep(c("r2","r2_adjust"),2),c(RsquareAdj(genet_RDA_DED),RsquareAdj(clim_RDA_DED),RsquareAdj(spatial_RDA_DED),RsquareAdj(complete_rda_DED))))
+names(var_part_DED)=c("Model", "r2_type", "r2_value")
+rownames(var_part_DED)=NULL
+knitr::kable(var_part_DED)
+```
+
+#### DNB
+
+```{r, echo=TRUE}
+genet_RDA_DNB=rda(allele_freqs_DNB ~ genet_PC1 + genet_PC2 +genet_PC3+genet_PC4+genet_PC5+genet_PC6+ Condition(clim_PC1+clim_PC2+MEM1+MEM2+MEM3+MEM4+MEM5),data = tot_DNB, scale = TRUE)
+clim_RDA_DNB=rda(allele_freqs_DNB ~ clim_PC1 + clim_PC2 + Condition(genet_PC1+genet_PC2+genet_PC3+genet_PC4+genet_PC5+genet_PC6+MEM1+MEM2+MEM3+MEM4+MEM5),data = tot_DNB, scale = TRUE)
+spatial_RDA_DNB=rda(allele_freqs_DNB ~ MEM1+ MEM2 + MEM3 + MEM4 + MEM5 + Condition(clim_PC1+clim_PC2+genet_PC1+genet_PC2+genet_PC3+genet_PC4+genet_PC5+genet_PC6),data = tot_DNB, scale = TRUE)
+complete_rda_DNB=rda(allele_freqs_DNB ~ MEM1+ MEM2+MEM3+MEM4  +MEM5+ clim_PC1+clim_PC2+genet_PC1+genet_PC2+genet_PC3+genet_PC4+genet_PC5+genet_PC6,data = tot_DNB, scale = TRUE)
+conv_RDA_DNB=rda(allele_freqs_DNB ~ clim_PC1+clim_PC2,data = tot_DNB, scale = TRUE)
+```
+
+```{r, echo=FALSE}
+var_part_DNB=as.data.frame(cbind(c("alleles ~ genetics","alleles ~ genetics","alleles ~ climate","alleles ~ climate","alleles ~ spatial","alleles ~ spatial","Full","Full"),rep(c("r2","r2_adjust"),2),c(RsquareAdj(genet_RDA_DNB),RsquareAdj(clim_RDA_DNB),RsquareAdj(spatial_RDA_DNB),RsquareAdj(complete_rda_DNB))))
+names(var_part_DNB)=c("Model", "r2_type", "r2_value")
+rownames(var_part_DNB)=NULL
+knitr::kable(var_part_DNB)
+```
+
+
+#### SNC
+
+```{r, echo=TRUE}
+genet_RDA_SNC=rda(allele_freqs_SNC ~ genet_PC1 + genet_PC2 + genet_PC3+ Condition(clim_PC1+clim_PC2+MEM1+MEM2),data = tot_SNC, scale = TRUE)
+clim_RDA_SNC=rda(allele_freqs_SNC ~ clim_PC1 + clim_PC2 + Condition(genet_PC1+genet_PC2+genet_PC3+MEM1+MEM2),data = tot_SNC, scale = TRUE)
+spatial_RDA_SNC=rda(allele_freqs_SNC ~ MEM1+ MEM2 + Condition(clim_PC1+clim_PC2+genet_PC1+genet_PC2+genet_PC3),data = tot_SNC, scale = TRUE)
+complete_rda_SNC=rda(allele_freqs_SNC ~ MEM1+ MEM2 + clim_PC1+clim_PC2+genet_PC1+genet_PC2+genet_PC3,data = tot_SNC, scale = TRUE)
+conv_RDA_SNC=rda(allele_freqs_SNC ~ clim_PC1+clim_PC2, data = tot_SNC, scale = TRUE)
+```
+
+```{r, echo=FALSE}
+var_part_SNC=as.data.frame(cbind(c("alleles ~ genetics","alleles ~ genetics","alleles ~ climate","alleles ~ climate","alleles ~ spatial","alleles ~ spatial","Full","Full"),rep(c("r2","r2_adjust"),2),c(RsquareAdj(genet_RDA_SNC),RsquareAdj(clim_RDA_SNC),RsquareAdj(spatial_RDA_SNC),RsquareAdj(complete_rda_SNC))))
+names(var_part_SNC)=c("Model", "r2_type", "r2_value")
+rownames(var_part_SNC)=NULL
+knitr::kable(var_part_SNC)
+```
+
+Results summary
+
+```{r, echo=FALSE}
+var_part_tot=as.data.frame(cbind(c("alleles ~ genetics","alleles ~ genetics","alleles ~ climate","alleles ~ climate","alleles ~ spatial","alleles ~ spatial","Full","Full"),rep(c("r2","r2_adjust"),2),c(RsquareAdj(genet_RDA_DED),RsquareAdj(clim_RDA_DED),RsquareAdj(spatial_RDA_DED),RsquareAdj(complete_rda_DED)),c(RsquareAdj(genet_RDA_DNB),RsquareAdj(clim_RDA_DNB),RsquareAdj(spatial_RDA_DNB),RsquareAdj(complete_rda_DNB)),c(RsquareAdj(genet_RDA_SNC),RsquareAdj(clim_RDA_SNC),RsquareAdj(spatial_RDA_SNC),RsquareAdj(complete_rda_SNC))))
+names(var_part_tot)=c("Model", "r2_type", "DED","DNB","SNC")
+rownames(var_part_tot)=NULL
+knitr::kable(var_part_tot)
+```
+
+
+```{r}
+vif.cca(conv_RDA_DED)
+```
+```{r}
+vif.cca(conv_RDA_DNB)
+```
+```{r}
+vif.cca(conv_RDA_SNC)
+```
+
+
+### Environment RDA and outliers
+
+#### DED
+
+```{r}
+my_pal <- RColorBrewer::brewer.pal(n=8, name = "Dark2")
+```
+
+
+### Extracting outliers loci pcadapt
+
+```{r, echo=FALSE,results=TRUE}
+clim_RDA_DED_radapt = rdadapt(conv_RDA_DED, 2)
+thres_env_DED = 0.01
+outliers_DED = data.frame(Loci = colnames(allele_freqs_DED)[which(clim_RDA_DED_radapt$q.values<thres_env_DED)], q.value = clim_RDA_DED_radapt$q.values[which(clim_RDA_DED_radapt$q.values<thres_env_DED)], contig = unlist(lapply(strsplit(colnames(allele_freqs_DED)[which(clim_RDA_DED_radapt$q.values<thres_env_DED)], split = ":"), function(x) x[1])))
+outliers_DED <- outliers_DED[order(outliers_DED$contig, outliers_DED$q.value),]
+outliers_rdadapt_env_DED <- as.character(outliers_DED$Loci[!duplicated(outliers_DED$contig)])
+```
+
+RDA outliers plot
+
+```{r, echo=FALSE}
+locus_scores_DED = scores(conv_RDA_DED, choices=c(1:2), display="species", scaling="none")
+TAB_loci_DED = data.frame(names = row.names(locus_scores_DED), locus_scores_DED)
+TAB_loci_DED$type <- "Neutral"
+TAB_loci_DED$type[TAB_loci_DED$names%in%outliers_DED$Loci] <- "All outliers"
+TAB_loci_DED$type[TAB_loci_DED$names%in%outliers_rdadapt_env_DED] <- "Top outliers"
+TAB_loci_DED$type <- factor(TAB_loci_DED$type, levels = c("Neutral", "All outliers", "Top outliers"))
+TAB_loci_DED <- TAB_loci_DED[order(TAB_loci_DED$type),]
+TAB_var_DED <- as.data.frame(scores(conv_RDA_DED, choices=c(1,2), display="bp"))
+
+plot_RDA_DED=ggplot() +
+  geom_hline(yintercept=0, linetype="dashed", color = gray(.80), size=0.6) +
+  geom_vline(xintercept=0, linetype="dashed", color = gray(.80), size=0.6) +
+  geom_point(data = TAB_loci_DED, aes(x=RDA1*20, y=RDA2*20, colour = type), size = 1.4) +
+  scale_color_manual(values = c("gray90", my_pal[1], "#6B4596FF")) +
+  geom_segment(data = TAB_var_DED, aes(xend=RDA1, yend=RDA2, x=0, y=0), colour="black", size=0.15, linetype=1, arrow=arrow(length = unit(0.02, "npc"))) +
+  geom_text(data = TAB_var_DED, aes(x=1.1*RDA1, y=1.1*RDA2, label = row.names(TAB_var_DED)), size = 2.5, family = "Times") +
+  xlab("RDA 1") + ylab("RDA 2") +
+  facet_wrap(~"RDA space") +
+  guides(color=guide_legend(title="Locus type")) +
+  theme_bw(base_size = 11, base_family = "Times") +
+  theme(panel.background = element_blank(), legend.background = element_blank(), panel.grid = element_blank(), plot.background = element_blank(), legend.text=element_text(size=rel(.8)), strip.text = element_text(size=11))
+plot_RDA_DED
+```
+
+RDA outliers manhattan plot
+
+```{r}
+Outliers_DED <- rep("Neutral", length(colnames(allele_freqs_DED)))
+Outliers_DED[colnames(allele_freqs_DED)%in%outliers_DED$Loci] <- "All outliers"
+Outliers_DED[colnames(allele_freqs_DED)%in%outliers_rdadapt_env_DED] <- "Top outliers"
+Outliers_DED <- factor(Outliers_DED, levels = c("Neutral", "All outliers", "Top outliers"))
+TAB_manhatan_DED <- data.frame(pos = 1:length(colnames(allele_freqs_DED)), 
+                           pvalues = clim_RDA_DED_radapt$p.values, 
+                           Outliers = Outliers_DED)
+TAB_manhatan_DED <- TAB_manhatan_DED[order(TAB_manhatan_DED$Outliers),]
+plot_man_DED=ggplot(data = TAB_manhatan_DED) +
+  geom_point(aes(x=pos, y=-log10(pvalues), col = Outliers), size=1.4) +
+  scale_color_manual(values = c("gray90", my_pal[1], "#6B4596FF")) +
+  xlab("Loci") + ylab("-log10(p.values)") +
+  geom_hline(yintercept=-log10(thres_env_DED), linetype="dashed", color = gray(.80), size=0.6) +
+  facet_wrap(~"Manhattan plot", nrow = 3) +
+  guides(color=guide_legend(title="Locus type")) +
+  theme_bw(base_size = 11, base_family = "Times") +
+  theme(legend.position="right", legend.background = element_blank(), panel.grid = element_blank(), legend.box.background = element_blank(), plot.background = element_blank(), panel.background = element_blank(), legend.text=element_text(size=rel(.8)), strip.text = element_text(size=11))
+```
+
+
+#### DNB
+
+### Extracting outliers loci pcadapt
+
+```{r, echo=FALSE,results=TRUE}
+clim_RDA_DNB_radapt = rdadapt(conv_RDA_DNB, 2)
+thres_env_DNB = 0.05
+outliers_DNB = data.frame(Loci = colnames(allele_freqs_DNB)[which(clim_RDA_DNB_radapt$q.values<thres_env_DNB)], q.value = clim_RDA_DNB_radapt$q.values[which(clim_RDA_DNB_radapt$q.values<thres_env_DNB)], contig = unlist(lapply(strsplit(colnames(allele_freqs_DNB)[which(clim_RDA_DNB_radapt$q.values<thres_env_DNB)], split = ":"), function(x) x[1])))
+outliers_DNB <- outliers_DNB[order(outliers_DNB$contig, outliers_DNB$q.value),]
+outliers_rdadapt_env_DNB <- as.character(outliers_DNB$Loci[!duplicated(outliers_DNB$contig)])
+```
+
+
+RDA outliers plot
+
+```{r, echo=FALSE}
+locus_scores_DNB = scores(conv_RDA_DNB, choices=c(1:2), display="species", scaling="none")
+TAB_loci_DNB = data.frame(names = row.names(locus_scores_DNB), locus_scores_DNB)
+TAB_loci_DNB$type <- "Neutral"
+TAB_loci_DNB$type[TAB_loci_DNB$names%in%outliers_DNB$Loci] <- "All outliers"
+TAB_loci_DNB$type[TAB_loci_DNB$names%in%outliers_rdadapt_env_DNB] <- "Top outliers"
+TAB_loci_DNB$type <- factor(TAB_loci_DNB$type, levels = c("Neutral", "All outliers", "Top outliers"))
+TAB_loci_DNB <- TAB_loci_DNB[order(TAB_loci_DNB$type),]
+TAB_var_DNB <- as.data.frame(scores(conv_RDA_DNB, choices=c(1,2), display="bp"))
+
+plot_RDA_DNB=ggplot() +
+  geom_hline(yintercept=0, linetype="dashed", color = gray(.80), size=0.6) +
+  geom_vline(xintercept=0, linetype="dashed", color = gray(.80), size=0.6) +
+  geom_point(data = TAB_loci_DNB, aes(x=RDA1*20, y=RDA2*20, colour = type), size = 1.4) +
+  scale_color_manual(values = c("gray90", my_pal[2], "#6B4596FF")) +
+  geom_segment(data = TAB_var_DNB, aes(xend=RDA1, yend=RDA2, x=0, y=0), colour="black", size=0.15, linetype=1, arrow=arrow(length = unit(0.02, "npc"))) +
+  geom_text(data = TAB_var_DNB, aes(x=1.1*RDA1, y=1.1*RDA2, label = row.names(TAB_var_DNB)), size = 2.5, family = "Times") +
+  xlab("RDA 1") + ylab("RDA 2") +
+  facet_wrap(~"RDA space") +
+  guides(color=guide_legend(title="Locus type")) +
+  theme_bw(base_size = 11, base_family = "Times") +
+  theme(panel.background = element_blank(), legend.background = element_blank(), panel.grid = element_blank(), plot.background = element_blank(), legend.text=element_text(size=rel(.8)), strip.text = element_text(size=11))
+```
+
+RDA outliers manhattan plot
+
+```{r}
+Outliers_DNB <- rep("Neutral", length(colnames(allele_freqs_DNB)))
+Outliers_DNB[colnames(allele_freqs_DNB)%in%outliers_DNB$Loci] <- "All outliers"
+Outliers_DNB[colnames(allele_freqs_DNB)%in%outliers_rdadapt_env_DNB] <- "Top outliers"
+Outliers_DNB <- factor(Outliers_DNB, levels = c("Neutral", "All outliers", "Top outliers"))
+TAB_manhatan_DNB <- data.frame(pos = 1:length(colnames(allele_freqs_DNB)), 
+                           pvalues = clim_RDA_DNB_radapt$p.values, 
+                           Outliers = Outliers_DNB)
+TAB_manhatan_DNB <- TAB_manhatan_DNB[order(TAB_manhatan_DNB$Outliers),]
+plot_man_DNB=ggplot(data = TAB_manhatan_DNB) +
+  geom_point(aes(x=pos, y=-log10(pvalues), col = Outliers), size=1.4) +
+  scale_color_manual(values = c("gray90", my_pal[2], "#6B4596FF")) +
+  xlab("Loci") + ylab("-log10(p.values)") +
+  geom_hline(yintercept=-log10(thres_env_DNB), linetype="dashed", color = gray(.80), size=0.6) +
+  facet_wrap(~"Manhattan plot", nrow = 3) +
+  guides(color=guide_legend(title="Locus type")) +
+  theme_bw(base_size = 11, base_family = "Times") +
+  theme(legend.position="right", legend.background = element_blank(), panel.grid = element_blank(), legend.box.background = element_blank(), plot.background = element_blank(), panel.background = element_blank(), legend.text=element_text(size=rel(.8)), strip.text = element_text(size=11))
+```
+
+
+#### SNC
+
+
+### Extracting outliers loci pcadapt
+
+```{r, echo=FALSE,results=TRUE}
+clim_RDA_SNC_radapt = rdadapt(conv_RDA_SNC, 2)
+thres_env_SNC = 0.01
+outliers_SNC = data.frame(Loci = colnames(allele_freqs_SNC)[which(clim_RDA_SNC_radapt$q.values<thres_env_SNC)], q.value = clim_RDA_SNC_radapt$q.values[which(clim_RDA_SNC_radapt$q.values<thres_env_SNC)], contig = unlist(lapply(strsplit(colnames(allele_freqs_SNC)[which(clim_RDA_SNC_radapt$q.values<thres_env_SNC)], split = ":"), function(x) x[1])))
+outliers_SNC <- outliers_SNC[order(outliers_SNC$contig, outliers_SNC$q.value),]
+outliers_rdadapt_env_SNC <- as.character(outliers_SNC$Loci[!duplicated(outliers_SNC$contig)])
+#knitr::kable(outliers_rdadapt_env_SNC)
+```
+
+
+RDA outliers plot
+
+```{r, echo=FALSE}
+locus_scores_SNC = scores(conv_RDA_SNC, choices=c(1:2), display="species", scaling="none")
+TAB_loci_SNC = data.frame(names = row.names(locus_scores_SNC), locus_scores_SNC)
+TAB_loci_SNC$type <- "Neutral"
+TAB_loci_SNC$type[TAB_loci_SNC$names%in%outliers_SNC$Loci] <- "All outliers"
+TAB_loci_SNC$type[TAB_loci_SNC$names%in%outliers_rdadapt_env_SNC] <- "Top outliers"
+TAB_loci_SNC$type <- factor(TAB_loci_SNC$type, levels = c("Neutral", "All outliers", "Top outliers"))
+TAB_loci_SNC <- TAB_loci_SNC[order(TAB_loci_SNC$type),]
+TAB_var_SNC <- as.data.frame(scores(conv_RDA_SNC, choices=c(1,2), display="bp"))
+
+plot_RDA_SNC=ggplot() +
+  geom_hline(yintercept=0, linetype="dashed", color = gray(.80), size=0.6) +
+  geom_vline(xintercept=0, linetype="dashed", color = gray(.80), size=0.6) +
+  geom_point(data = TAB_loci_SNC, aes(x=RDA1*20, y=RDA2*20, colour = type), size = 1.4) +
+  scale_color_manual(values = c("gray90", my_pal[3], "#6B4596FF")) +
+  geom_segment(data = TAB_var_SNC, aes(xend=RDA1, yend=RDA2, x=0, y=0), colour="black", size=0.15, linetype=1, arrow=arrow(length = unit(0.02, "npc"))) +
+  geom_text(data = TAB_var_SNC, aes(x=1.1*RDA1, y=1.1*RDA2, label = row.names(TAB_var_SNC)), size = 2.5, family = "Times") +
+  xlab("RDA 1") + ylab("RDA 2") +
+  facet_wrap(~"RDA space") +
+  guides(color=guide_legend(title="Locus type")) +
+  theme_bw(base_size = 11, base_family = "Times") +
+  theme(panel.background = element_blank(), legend.background = element_blank(), panel.grid = element_blank(), plot.background = element_blank(), legend.text=element_text(size=rel(.8)), strip.text = element_text(size=11))
+```
+
+RDA outliers manhattan plot
+
+```{r}
+Outliers_SNC <- rep("Neutral", length(colnames(allele_freqs_SNC)))
+Outliers_SNC[colnames(allele_freqs_SNC)%in%outliers_SNC$Loci] <- "All outliers"
+Outliers_SNC[colnames(allele_freqs_SNC)%in%outliers_rdadapt_env_SNC] <- "Top outliers"
+Outliers_SNC <- factor(Outliers_SNC, levels = c("Neutral", "All outliers", "Top outliers"))
+TAB_manhatan_SNC <- data.frame(pos = 1:length(colnames(allele_freqs_SNC)), 
+                           pvalues = clim_RDA_SNC_radapt$p.values, 
+                           Outliers = Outliers_SNC)
+TAB_manhatan_SNC <- TAB_manhatan_SNC[order(TAB_manhatan_SNC$Outliers),]
+plot_man_SNC=ggplot(data = TAB_manhatan_SNC) +
+  geom_point(aes(x=pos, y=-log10(pvalues), col = Outliers), size=1.4) +
+  scale_color_manual(values = c("gray90", my_pal[3], "#6B4596FF")) +
+  xlab("Loci") + ylab("-log10(p.values)") +
+  geom_hline(yintercept=-log10(thres_env_SNC), linetype="dashed", color = gray(.80), size=0.6) +
+  facet_wrap(~"Manhattan plot", nrow = 3) +
+  guides(color=guide_legend(title="Locus type")) +
+  theme_bw(base_size = 11, base_family = "Times") +
+  theme(legend.position="right", legend.background = element_blank(), panel.grid = element_blank(), legend.box.background = element_blank(), plot.background = element_blank(), panel.background = element_blank(), legend.text=element_text(size=rel(.8)), strip.text = element_text(size=11))
+```
+
+```{r write lists of threshold outliers}
+write.csv(outliers_rdadapt_env_DED,"/RDA_outliers_list.csv",row.names = FALSE)
+write.csv(outliers_rdadapt_env_DNB,"/RDA_outliers_list.csv",row.names = FALSE)
+write.csv(outliers_rdadapt_env_SNC,"/RDA_outliers_list.csv",row.names = FALSE)
+```
+
+```{r big RDA plot}
+pdf("C:/Users/Yunalesca/Documents/BioSAFE/CLIM/triple_RDA.pdf", height = 10, width = 10)
+ggarrange(plot_RDA_DED, plot_man_DED, plot_RDA_DNB, plot_man_DNB, plot_RDA_SNC, plot_man_SNC, 
+          labels = c("A", "B", "C","D","E","F"),
+          ncol = 2, nrow = 3)
+dev.off()
+
+```
+
+
+## LFMM2
+
+LFMM geno format was obtained using ped2geno function from LEA package.
+
+```{r convert ped to LEA formats}
+ped2lfmm("/SNC_maf_noNM.ped" ,  output.file  =  "/SNC_maf_noNM.lfmm",  force  =  TRUE )
+ped2geno("/SNC_maf_noNM.ped", "/SNC_maf_noNM.geno", force = TRUE)
+
+project = NULL
+project = snmf("/SNC_maf_noNM.geno",
+               K = 3,
+               entropy = TRUE,
+               repetitions = 10,
+               project = "new")
+
+best = which.min(cross.entropy(project, K = 3))
+
+impute(project, "/SNC_maf_noNM.lfmm",
+       method = 'mode', K = 3, run = best)
+```
+
+```{r}
+library(LEA)
+lea_DED="/DED_maf.lfmm_imputed.lfmm"
+lea_DNB="/DNB_maf.lfmm_imputed.lfmm"
+lea_SNC="/SNC_maf_noNM.lfmm_imputed.lfmm"
+```
+
+### LFMM2 DED
+```{r}
+mod_DED=NULL
+mod_DED <- lfmm2(input = lea_DED, env = cbind(clim_DED$PC1_clim, clim_DED$PC2_clim), K = 3)
+pv_DED=lfmm2.test(mod_DED, lea_DED, cbind(clim_DED$PC1_clim, clim_DED$PC2_clim), linear=TRUE)
+
+lfmm_pvalues_DED=as.data.frame(t(pv_DED$pvalues))
+plot(-log10(lfmm_pvalues_DED$X2), col = my_pal[1], cex = .4, pch = 19)
+plot_LFMM2_DED=ggplot(data=lfmm_pvalues_DED, aes(seq(1,length(lfmm_pvalues_DED$X2),1),-log10(X2))) +
+  geom_point(color = c(my_pal[1]), alpha=0.6)+
+  theme_bw()+
+  xlab("Loci")+
+  ylab("-log10 LFMM2 pvalue") + 
+  scale_x_continuous(labels = scales::comma)+
+  geom_hline(yintercept=2, linetype="dashed", color = "darkred")+
+  theme(axis.title.y = element_text(vjust = -5))
+plot_LFMM2_DED
+```
+
+
+```{r}
+pv_DED$gif
+```
+
+```{r}
+TAB_manhatan_DED$logpLFMM2=-log10(lfmm_pvalues_DED$X2)
+TAB_manhatan_DED$loci=TAB_loci_DED$names
+TAB_manhatan_DED$pvalues_LFMM=lfmm_pvalues_DED$X2
+TAB_manhatan_DED$qvalue=p.adjust(TAB_manhatan_DED$pvalues, method="fdr", n=length(TAB_manhatan_DED$pvalues_LFMM))
+top_DED_LFMM2=subset(TAB_manhatan_DED, TAB_manhatan_DED$qvalue<0.01)
+nrow(top_DED_LFMM2)
+nrow(top_DED_LFMM2)/nrow(TAB_manhatan_DED)*100
+# Version for top n outliers
+# top_DED_LFMM2=top_n(TAB_manhatan_DED,0.1*nrow(TAB_manhatan_DED),logpLFMM2)
+# top_DED_LFMM2=top_DED_LFMM2$loci
+length(intersect(top_DED_LFMM2$loci,outliers_DED$Loci))
+```
+
+#### Genomic offset
+
+```{r compute genetic offset DED}
+gap_DED <- genetic.gap(input = lea_DED,
+env = pred_clim_DED[,8:38],
+pred.env = pred_clim_DED[,43:73],
+scale = TRUE, K = 3)
+```
+
+
+### LFMM2 DNB
+```{r}
+mod_DNB=NULL
+mod_DNB <- lfmm2(input = lea_DNB, env = clim_DNB$clim_PC1, K = 12)
+pv_DNB=lfmm2.test(mod_DNB, lea_DNB, clim_DNB$clim_PC1, full =FALSE, linear=FALSE, genomic.control = TRUE, family="poisson")
+plot(-log10(pv_DNB$pvalues), col = my_pal[2], cex = .4, pch = 19)
+hist(pv_DNB$pvalues)
+pv_DNB$gif
+
+lfmm_pvalues_DNB=as.data.frame(pv_DNB$pvalues)
+
+plot_LFMM2_DNB=ggplot(data=lfmm_pvalues_DNB, aes(seq(1,length(V1),1),-log10(V1))) +
+  geom_point(color = c(my_pal[2]), alpha=0.6)+
+  theme_bw()+
+  xlab("Loci")+
+  ylab("-log10 LFMM2 pvalue") + 
+  scale_x_continuous(labels = scales::comma)+
+  geom_hline(yintercept=2, linetype="dashed", color = "darkred")+
+  theme(axis.title.y = element_text(vjust = -5))
+plot_LFMM2_DNB
+```
+
+
+#### Genomic offset
+
+```{r compute genetic offset DNB}
+gap_DNB <- genetic.gap(input = lea_DNB[],
+env = pred_clim_DNB[7:37],
+pred.env = pred_clim_DNB[,39:69],
+scale = TRUE, K = 8)
+```
+
+
+### LFMM2 SNC
+
+```{r}
+mod_SNC=NULL
+mod_SNC <- lfmm2(input = lea_SNC, env = clim_SNC$clim_PC1, K = 2)
+pv_SNC=lfmm2.test(mod_SNC, lea_SNC, clim_SNC$clim_PC1, linear=FALSE, genomic.control = TRUE, family="poisson")
+hist(pv_SNC$pvalues)
+plot(-log10(pv_SNC$pvalues), col = my_pal[3], cex = .4, pch = 19)
+
+lfmm_pvalues_SNC=as.data.frame(pv_SNC$pvalues)
+
+plot_LFMM2_SNC=ggplot(data=lfmm_pvalues_SNC, aes(seq(1,length(V1),1),-log10(V1))) +
+  geom_point(color = c(my_pal[3]), alpha=0.6)+
+  theme_bw()+
+  xlab("Loci")+
+  ylab("-log10 LFMM2 pvalue") + 
+  scale_x_continuous(labels = scales::comma)+
+  geom_hline(yintercept=2, linetype="dashed", color = "darkred")+
+  theme(axis.title.y = element_text(vjust = -5))
+plot_LFMM2_SNC
+```
+
+
+```{r}
+pv_SNC$gif
+```
+
+
+#### Genomic offset
+
+```{r compute genetic offset}
+gap_SNC <- genetic.gap(input = lea_SNC,
+env = pred_clim_SNC[,7:37],
+pred.env = pred_clim_SNC[,39:69],
+scale = TRUE, K = 3)
+```
+
