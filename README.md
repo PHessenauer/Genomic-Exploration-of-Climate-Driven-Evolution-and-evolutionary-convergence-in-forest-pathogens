@@ -10,3 +10,5 @@ Sources used for variance partioning and RDA analysis https://github.com/Capblan
 
 Sources used for LFMM2 https://www.bioconductor.org/packages/devel/bioc/manuals/LEA/man/LEA.pdf  
 
+Sources used for WZA and Picmin https://github.com/TBooker/PicMin  
+
